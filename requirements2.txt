@@ -1,0 +1,4 @@
+# Install SAM3 from GitHub with notebook dependencies
+git+https://github.com/facebookresearch/sam3.git#egg=sam3[notebooks]
+
+

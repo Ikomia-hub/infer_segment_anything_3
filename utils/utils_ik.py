@@ -6,19 +6,29 @@ from huggingface_hub import hf_hub_download
 
 
 def check_float16_and_bfloat16_support(cuda):
-    if torch.cuda.is_available() and cuda:
-        gpu = torch.device('cuda')
-        compute_capability = torch.cuda.get_device_capability(gpu)
-        # Compute capability 6.0 or higher
-        float16_support = compute_capability[0] >= 6
-        # Compute capability 8.0 or higher
-        bfloat16_support = compute_capability[0] >= 8
-        if bfloat16_support:
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
-        return float16_support, bfloat16_support
+    # Only check CUDA if explicitly requested to avoid triggering CUDA initialization
+    if cuda:
+        try:
+            if torch.cuda.is_available():
+                gpu = torch.device('cuda')
+                compute_capability = torch.cuda.get_device_capability(gpu)
+                # Compute capability 6.0 or higher
+                float16_support = compute_capability[0] >= 6
+                # Compute capability 8.0 or higher
+                bfloat16_support = compute_capability[0] >= 8
+                if bfloat16_support:
+                    torch.backends.cuda.matmul.allow_tf32 = True
+                    torch.backends.cudnn.allow_tf32 = True
+                return float16_support, bfloat16_support
+            else:
+                print("No GPU found")
+                return False, False
+        except RuntimeError:
+            # CUDA not available or initialization failed
+            print("No GPU found")
+            return False, False
     else:
-        print("No GPU found")
+        # CUDA explicitly disabled
         return False, False
 
 
@@ -108,3 +118,42 @@ def get_checkpoint_path(base_dir):
         print(f"Using existing model weights from {checkpoint_path}")
 
     return checkpoint_path
+
+
+def fix_cuda_caches_and_buffers(module, device, clear_cache=True):
+    """
+    Recursively clear CUDA caches and ensure all buffers and parameters are on the correct device.
+    Also clears decoder coordinate caches that may be on the wrong device.
+    
+    Args:
+        module: PyTorch module to process
+        device: Target device (torch.device)
+        clear_cache: Whether to clear CUDA cache (only True for top-level call)
+    """
+    # Clear CUDA cache if using CUDA (only once at top level)
+    if clear_cache and device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    # Clear decoder coordinate caches if they exist (these can cause device mismatch errors)
+    if hasattr(module, 'coord_cache'):
+        # Clear the coordinate cache dict - it will be recreated on the correct device
+        module.coord_cache = {}
+    if hasattr(module, 'compilable_cord_cache'):
+        # Clear the compilable coordinate cache - it will be recreated on the correct device
+        module.compilable_cord_cache = None
+        if hasattr(module, 'compilable_stored_size'):
+            module.compilable_stored_size = None
+    
+    # Recursively process all submodules (don't clear cache again)
+    for child in module.children():
+        fix_cuda_caches_and_buffers(child, device, clear_cache=False)
+    
+    # Move all buffers to the correct device
+    for name, buffer in module.named_buffers(recurse=False):
+        if buffer.device != device:
+            buffer.data = buffer.data.to(device)
+    
+    # Move all parameters to the correct device
+    for name, param in module.named_parameters(recurse=False):
+        if param.device != device:
+            param.data = param.data.to(device)

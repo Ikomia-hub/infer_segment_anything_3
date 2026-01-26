@@ -13,7 +13,7 @@ from ikomia import core, dataprocess, utils
 
 from sam3 import build_sam3_image_model
 from sam3.model.sam3_image_processor import Sam3Processor
-from infer_segment_anything_3.utils.utils_ik import check_float16_and_bfloat16_support, resize_mask, get_checkpoint_path
+from infer_segment_anything_3.utils.utils_ik import check_float16_and_bfloat16_support, resize_mask, get_checkpoint_path, fix_cuda_caches_and_buffers
 from infer_segment_anything_3.inference import infer_text_predictor, infer_geometric_predictor
 
 
@@ -32,7 +32,9 @@ class InferSegmentAnything3Param(core.CWorkflowTaskParam):
         self.input_point_label = ''
         self.input_text = ''  # Text prompt for text-based segmentation
         self.confidence_threshold = 0.5  # Confidence threshold for predictions
-        self.cuda = torch.cuda.is_available()
+        # Default to False (CPU) to avoid triggering CUDA initialization
+        # User can enable CUDA explicitly via set_parameters if needed
+        self.cuda = False
         self.multimask_output = True  # SAM3 recommends True for ambiguous prompts
         self.update = False
 
@@ -92,14 +94,16 @@ class InferSegmentAnything3(dataprocess.CSemanticSegmentationTask):
         else:
             self.set_param_object(copy.deepcopy(param))
 
-        self.device = torch.device("cuda")
+        # Initialize to CPU, will be set correctly in _load_model
+        self.device = torch.device("cpu")
         self.model = None
         self.processor = None
         self.inference_state = None
         self.input_point = None
         self.input_label = np.array([1])  # foreground point
         self.input_box = None
-        self.dtype = torch.float16
+        # Initialize to float32, will be set correctly in _load_model
+        self.dtype = torch.float32
         self.base_dir = os.path.dirname(os.path.realpath(__file__))
 
     def init_long_process(self):
@@ -118,14 +122,28 @@ class InferSegmentAnything3(dataprocess.CSemanticSegmentationTask):
         """Load SAM3 model and create processor."""
         param = self.get_param_object()
 
+        # Determine device FIRST based on param.cuda setting
+        # Only check CUDA availability if param.cuda is True to avoid triggering CUDA init
+        if param.cuda:
+            try:
+                # Only check CUDA if explicitly requested
+                cuda_available = torch.cuda.is_available()
+                self.device = torch.device(
+                    "cuda") if cuda_available else torch.device("cpu")
+            except RuntimeError:
+                # CUDA not available or initialization failed
+                self.device = torch.device("cpu")
+                print("CUDA requested but not available - using CPU")
+        else:
+            # CUDA explicitly disabled, use CPU
+            self.device = torch.device("cpu")
+
         # Check for float16 and bfloat16 support
         float16_support, bfloat16_support = check_float16_and_bfloat16_support(
             param.cuda)
 
         # Determine dtype based on GPU support
         self.dtype = torch.bfloat16 if bfloat16_support else torch.float16 if float16_support else torch.float32
-        self.device = torch.device(
-            "cuda") if param.cuda and torch.cuda.is_available() else torch.device("cpu")
 
         if self.device.type == "cuda":
             # Use bfloat16 for CUDA
@@ -134,6 +152,9 @@ class InferSegmentAnything3(dataprocess.CSemanticSegmentationTask):
             if torch.cuda.get_device_properties(0).major >= 8:
                 torch.backends.cuda.matmul.allow_tf32 = True
                 torch.backends.cudnn.allow_tf32 = True
+        else:
+            # Print message when CUDA is disabled
+            print("No GPU found - using CPU")
 
         # Load SAM3 model
         bpe_path = os.path.join(
@@ -144,16 +165,38 @@ class InferSegmentAnything3(dataprocess.CSemanticSegmentationTask):
         checkpoint_path = get_checkpoint_path(self.base_dir)
 
         # Build model with local checkpoint path
+        # Always build on CPU first to avoid device mismatch, then move to target device
+        device_str = "cuda" if self.device.type == "cuda" else "cpu"
         self.model = build_sam3_image_model(
             bpe_path=bpe_path,
+            device="cpu",  # Always build on CPU first to ensure clean state
             enable_inst_interactivity=True,
             checkpoint_path=checkpoint_path,
             load_from_HF=False  # Don't download from HF, use local path
         )
 
-        # Create processor with confidence threshold
+        # Explicitly ensure model and all submodules are on the correct device
+        # This is critical to avoid device mismatch errors
+        # Use eval() to ensure model is in eval mode
+        self.model.eval()
+        
+        # Clear any coordinate caches before moving to device (they'll be recreated on correct device)
+        fix_cuda_caches_and_buffers(self.model, torch.device("cpu"), clear_cache=False)
+        
+        # Now move to target device
+        self.model = self.model.to(self.device)
+        
+        # Force clear any cached device property to ensure it reflects the new device
+        if hasattr(self.model, '_device'):
+            self.model._device = None
+
+        # Recursively clear CUDA caches and ensure all buffers/parameters are on correct device
+        # This also clears coordinate caches that might have been created during model building
+        fix_cuda_caches_and_buffers(self.model, self.device)
+
+        # Create processor with confidence threshold and correct device
         self.processor = Sam3Processor(
-            self.model, confidence_threshold=param.confidence_threshold)
+            self.model, device=device_str, confidence_threshold=param.confidence_threshold)
 
         param.update = False
 

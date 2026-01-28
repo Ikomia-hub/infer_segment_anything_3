@@ -58,6 +58,11 @@ class InferSegmentAnything3Widget(core.CWorkflowTaskWidget):
             step=0.05
         )
 
+        # Multimask output checkbox
+        self.check_multimask_output = pyqtutils.append_check(
+            self.section1_layout, "Multimask output", self.parameters.multimask_output
+        )
+
         # Section 2: TEXT PREDICTOR
         self.toggle_text_button = QPushButton("▶ TEXT PREDICTOR")
         self.toggle_text_button.setCheckable(True)
@@ -94,11 +99,6 @@ class InferSegmentAnything3Widget(core.CWorkflowTaskWidget):
         self.prompt_group.setLayout(self.prompt_layout)
         self.prompt_group.setVisible(False)
         self.grid_layout.addWidget(self.prompt_group)
-
-        # Multimask output checkbox
-        self.check_multimask_output = pyqtutils.append_check(
-            self.prompt_layout, "Multimask output", self.parameters.multimask_output
-        )
 
         # Box input
         self.edit_box_input = pyqtutils.append_edit(

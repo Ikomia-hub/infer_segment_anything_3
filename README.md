@@ -193,7 +193,7 @@ algo.set_parameters({
 This will segment all objects matching the text description in the image.
 
 ### 2. Single point prompt
-SAM3 with `"multimask_output":"True"` generates three output masks given a single point (3 best scores). This is useful for ambiguous prompts where the intended object is unclear.
+When `"multimask_output":"True"`, SAM3 generates multiple candidate masks (typically 3) for ambiguous prompts like a single point and returns them as separate outputs. This is useful when the intended object is unclear, allowing you to choose the best mask. When `"multimask_output":"False"`, only the best mask (highest score) is returned.
 
 ```python
 algo.set_parameters({

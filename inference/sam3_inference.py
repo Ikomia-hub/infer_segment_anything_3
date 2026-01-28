@@ -8,6 +8,42 @@ from PIL import Image
 from ikomia import core
 
 
+def _process_multimask_output(masks, scores, multimask_output):
+    """
+    Process masks based on multimask_output setting.
+
+    Args:
+        masks: Predicted masks (numpy array)
+        scores: Mask scores (numpy array)
+        multimask_output: Boolean indicating whether to return multiple masks
+
+    Returns:
+        List of processed masks
+    """
+    # Sort by score
+    sorted_ind = np.argsort(scores)[::-1]
+    masks = masks[sorted_ind]
+    scores = scores[sorted_ind]
+
+    # Handle multimask_output
+    masks = np.squeeze(masks)
+    if masks.ndim == 3:
+        # Multiple masks per prompt
+        if multimask_output:
+            # Return all masks as separate outputs
+            masks = [masks[i] for i in range(masks.shape[0])]
+        else:
+            # Return the best mask
+            masks = [masks[0]]
+    elif masks.ndim == 2:
+        # Single mask
+        masks = [masks]
+    else:
+        masks = [masks[0]]
+
+    return masks
+
+
 def infer_text_predictor(processor, src_image, param):
     """
     Run SAM3 prediction using text prompt.
@@ -163,22 +199,27 @@ def infer_geometric_predictor(model, processor, graph_input, src_image, resizing
             multimask_output=param.multimask_output,
         )
 
-        # Combine masks from multiple boxes
+        # Process masks from multiple boxes
         masks = np.squeeze(masks)
         if masks.ndim == 3:
-            mask_output = np.zeros(
-                (masks.shape[1], masks.shape[2]), dtype=masks.dtype)
-            for i, mask_bool in enumerate(masks):
-                mask_output += mask_bool * (i + 1)
-            masks = [mask_output]
+            # Single box with multiple masks
+            if param.multimask_output:
+                # Return all masks as separate outputs
+                masks = [masks[i] for i in range(masks.shape[0])]
+            else:
+                # Return only the best mask
+                masks = [masks[0]]
         elif masks.ndim == 4:
+            # Multiple boxes, shape: [num_multimasks, num_boxes, H, W]
             mask_outputs = []
-            for j in range(masks.shape[1]):
-                mask_output = np.zeros(
-                    (masks.shape[2], masks.shape[3]), dtype=masks.dtype)
-                for i, mask_bool in enumerate(masks[:, j, :, :]):
-                    mask_output += mask_bool * (i + 1)
-                mask_outputs.append(mask_output)
+            for j in range(masks.shape[1]):  # For each box
+                if param.multimask_output:
+                    # Return all multimasks for this box as separate outputs
+                    for i in range(masks.shape[0]):
+                        mask_outputs.append(masks[i, j, :, :])
+                else:
+                    # Return only the best mask for this box
+                    mask_outputs.append(masks[0, j, :, :])
             masks = mask_outputs
         else:
             raise ValueError("Unexpected mask dimensions")
@@ -192,16 +233,8 @@ def infer_geometric_predictor(model, processor, graph_input, src_image, resizing
             multimask_output=param.multimask_output,
         )
 
-        # Sort by score and take the best mask
-        sorted_ind = np.argsort(scores)[::-1]
-        masks = masks[sorted_ind]
-        scores = scores[sorted_ind]
-
-        if param.multimask_output:
-            # Return the best mask when multimask_output is True
-            masks = [masks[0]]
-        else:
-            masks = [masks[0] if masks.ndim == 3 else masks]
+        masks = _process_multimask_output(
+            masks, scores, param.multimask_output)
 
     elif input_point is None and input_box is not None and len(input_box) == 1:
         # Single box
@@ -213,10 +246,8 @@ def infer_geometric_predictor(model, processor, graph_input, src_image, resizing
             multimask_output=param.multimask_output,
         )
 
-        # Sort by score and take the best mask
-        sorted_ind = np.argsort(scores)[::-1]
-        masks = masks[sorted_ind]
-        masks = [masks[0]]
+        masks = _process_multimask_output(
+            masks, scores, param.multimask_output)
 
     elif input_point is not None and input_box is not None and len(input_box) == 1:
         # Single box with point(s) - use point as background to refine
@@ -229,10 +260,8 @@ def infer_geometric_predictor(model, processor, graph_input, src_image, resizing
             multimask_output=param.multimask_output,
         )
 
-        # Sort by score and take the best mask
-        sorted_ind = np.argsort(scores)[::-1]
-        masks = masks[sorted_ind]
-        masks = [masks[0]]
+        masks = _process_multimask_output(
+            masks, scores, param.multimask_output)
 
     else:
         masks = [np.zeros(src_image.shape[:2], dtype=np.uint8)]

@@ -32,10 +32,8 @@ class InferSegmentAnything3Param(core.CWorkflowTaskParam):
         self.input_point_label = ''
         self.input_text = ''  # Text prompt for text-based segmentation
         self.confidence_threshold = 0.5  # Confidence threshold for predictions
-        # Default to False (CPU) to avoid triggering CUDA initialization
-        # User can enable CUDA explicitly via set_parameters if needed
-        self.cuda = False
-        self.multimask_output = True  # SAM3 recommends True for ambiguous prompts
+        self.cuda = torch.cuda.is_available()
+        self.multimask_output = False  # SAM3 recommends True for ambiguous prompts
         self.update = False
 
     def set_values(self, param_map):
@@ -179,13 +177,14 @@ class InferSegmentAnything3(dataprocess.CSemanticSegmentationTask):
         # This is critical to avoid device mismatch errors
         # Use eval() to ensure model is in eval mode
         self.model.eval()
-        
+
         # Clear any coordinate caches before moving to device (they'll be recreated on correct device)
-        fix_cuda_caches_and_buffers(self.model, torch.device("cpu"), clear_cache=False)
-        
+        fix_cuda_caches_and_buffers(
+            self.model, torch.device("cpu"), clear_cache=False)
+
         # Now move to target device
         self.model = self.model.to(self.device)
-        
+
         # Force clear any cached device property to ensure it reflects the new device
         if hasattr(self.model, '_device'):
             self.model._device = None

@@ -4,4 +4,5 @@ torchvision>=0.21.0, <0.23.0
 
 wheel
 setuptools>=59.6.0, <70.0
+ninja
 meson-python

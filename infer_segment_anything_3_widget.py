@@ -1,11 +1,14 @@
 """
 Module that implements the UI widget of the algorithm.
 """
+from torch.cuda import is_available
+
+from PyQt6.QtWidgets import *
+
 from ikomia import core, dataprocess
 from ikomia.utils import pyqtutils, qtconversion
+
 from infer_segment_anything_3.infer_segment_anything_3_process import InferSegmentAnything3Param
-from torch.cuda import is_available
-from PyQt5.QtWidgets import *
 
 
 class InferSegmentAnything3Widget(core.CWorkflowTaskWidget):

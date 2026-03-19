@@ -13,6 +13,7 @@ from ikomia import core, dataprocess, utils
 
 from sam3 import build_sam3_image_model
 from sam3.model.sam3_image_processor import Sam3Processor
+
 from infer_segment_anything_3.utils.utils_ik import check_float16_and_bfloat16_support, resize_mask, get_checkpoint_path, fix_cuda_caches_and_buffers
 from infer_segment_anything_3.inference import infer_text_predictor, infer_geometric_predictor
 
@@ -126,8 +127,7 @@ class InferSegmentAnything3(dataprocess.CSemanticSegmentationTask):
             try:
                 # Only check CUDA if explicitly requested
                 cuda_available = torch.cuda.is_available()
-                self.device = torch.device(
-                    "cuda") if cuda_available else torch.device("cpu")
+                self.device = torch.device("cuda") if cuda_available else torch.device("cpu")
             except RuntimeError:
                 # CUDA not available or initialization failed
                 self.device = torch.device("cpu")
@@ -333,7 +333,7 @@ class InferSegmentAnything3Factory(dataprocess.CTaskFactory):
         self.info.license = "SAM License"
 
         # Ikomia API compatibility
-        self.info.min_ikomia_version = "0.15.0"
+        self.info.min_ikomia_version = "0.16.0"
 
         # Python compatibility
         self.info.min_python_version = "3.11.0"
